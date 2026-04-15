@@ -1,11 +1,11 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Briefcase, MessageSquare, Bell, Calendar, BarChart3, MapPin, Sparkles } from 'lucide-react';
+import { Briefcase, MessageSquare, Bell, Calendar, BarChart3, Sparkles, MapPin } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import useT from '../i18n/useT';
 
 const Navigation = () => {
-  const { isAdmin, isCEO, canAccessPage } = useAppContext();
+  const { isAdmin, canAccessPage } = useAppContext();
   const t = useT();
 
   const navLinks = [];
@@ -26,10 +26,7 @@ const Navigation = () => {
   // Alerts are base for all users
   navLinks.push({ to: '/alerts', icon: <Bell size={18}/>, label: t('alerts') });
   if (canAccessPage?.('ai')) navLinks.push({ to: '/ai', icon: <Sparkles size={18}/>, label: t('ai') });
-
-  if (isCEO && canAccessPage?.('live-map')) {
-    navLinks.push({ to: '/live-map', icon: <MapPin size={18}/>, label: t('liveMap') });
-  }
+  if (canAccessPage?.('live-map')) navLinks.push({ to: '/live-map', icon: <MapPin size={18}/>, label: t('liveMap'), desktopOnly: true });
 
   return (
     <nav
@@ -47,7 +44,7 @@ const Navigation = () => {
           key={tab.to}
           to={tab.to}
           className={({ isActive }) =>
-            `flex flex-col items-center gap-0.5 transition-all ${isActive ? 'text-indigo-600 scale-105' : 'text-slate-400 hover:text-indigo-400'}`
+            `${tab.desktopOnly ? 'hidden md:flex' : 'flex'} flex-col items-center gap-0.5 transition-all ${isActive ? 'text-indigo-600 scale-105' : 'text-slate-400 hover:text-indigo-400'}`
           }
         >
           {({ isActive }) => (

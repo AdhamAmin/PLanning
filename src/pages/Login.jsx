@@ -4,6 +4,7 @@ import { db } from '../firebase';
 import { doc, setDoc } from 'firebase/firestore';
 import { useAppContext } from '../context/AppContext';
 import useT from '../i18n/useT';
+import { normalizeEmployeeId, userMatchesEmployeeId } from '../utils/userIdentity';
 
 const Login = () => {
   const { users, loginUser, addNotification } = useAppContext();
@@ -25,8 +26,10 @@ const Login = () => {
     e.preventDefault();
     setError('');
     const { username, id, email, phone } = loginForm;
+    const trimmedUsername = username.trim();
+    const normalizedId = normalizeEmployeeId(id);
 
-    if (!username.trim() || !id.trim()) {
+    if (!trimmedUsername || !normalizedId) {
       setError('Please fill in all required fields.');
       return;
     }
@@ -36,15 +39,23 @@ const Login = () => {
         setError('Email and phone number are required for registration.');
         return;
       }
-      const existing = users.find(u => u.id === id);
+      const existing = users.find(u => u.id === normalizedId || userMatchesEmployeeId(u, normalizedId));
       if (existing) { setError('Employee ID already exists. Please login instead.'); return; }
-      const newUser = { username: username.trim(), id, email: email.trim(), phone: phone.trim(), role: 'user', nickname: username.trim(), permanent: false };
-      await setDoc(doc(db, 'users', id), newUser);
-      loginUser(newUser);
-      addNotification(`Welcome to DrWEEE Flow, ${username}!`, 'success', newUser.id);
-      addNotification(`New user registered: ${username} (${id})`, 'info', 'admin');
+      const newUser = {
+        username: trimmedUsername,
+        employeeId: normalizedId,
+        email: email.trim(),
+        phone: phone.trim(),
+        role: 'user',
+        nickname: trimmedUsername,
+        permanent: false,
+      };
+      await setDoc(doc(db, 'users', normalizedId), newUser);
+      loginUser({ ...newUser, id: normalizedId });
+      addNotification(`Welcome to DrWEEE Flow, ${trimmedUsername}!`, 'success', normalizedId);
+      addNotification(`New user registered: ${trimmedUsername} (${normalizedId})`, 'info', 'admin');
     } else {
-      const user = users.find(u => u.username === username && u.id === id);
+      const user = users.find(u => u.username === trimmedUsername && userMatchesEmployeeId(u, normalizedId));
       if (user) {
         loginUser(user);
         if (user.role === 'ceo') {

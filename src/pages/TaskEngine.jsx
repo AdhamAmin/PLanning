@@ -9,7 +9,9 @@ import { db } from '../firebase';
 import { collection, doc, addDoc, updateDoc, deleteDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
 import { useAppContext } from '../context/AppContext';
 import { syncTaskCreated, syncTaskUpdated, syncTaskDeleted } from '../services/sheetsService';
+import { sendTaskAssignmentEmail } from '../services/emailService';
 import { SECTORS, PIPELINE_STAGES, OPPORTUNITY_TYPES, CURRENCIES, COUNTRIES } from '../archive/db';
+import { getUserEmployeeId } from '../utils/userIdentity';
 
 const STAGE_TKEY = {
   Lead: 'stageLead',
@@ -114,7 +116,7 @@ const StatusDetailsModal = ({ type, itemId, onClose }) => {
       // Mention notifications: supports @username and @employeeId
       const mentionTokens = [...new Set((text.match(/@([A-Za-z0-9_.-]+)/g) || []).map(m => m.slice(1).toLowerCase()))];
       const mentionedUserIds = users
-        .filter(u => mentionTokens.includes((u.username || '').toLowerCase()) || mentionTokens.includes((u.id || '').toLowerCase()))
+        .filter(u => mentionTokens.includes((u.username || '').toLowerCase()) || mentionTokens.includes(getUserEmployeeId(u).toLowerCase()))
         .map(u => u.id)
         .filter(uid => uid && uid !== currentUser.id);
       const title = type === 'task' ? (item.title || t('task')) : (item.client || t('opportunity'));
@@ -199,6 +201,16 @@ const StatusDetailsModal = ({ type, itemId, onClose }) => {
 
         <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 mb-4">
           <p className="text-sm font-black text-slate-800 break-words">{title}</p>
+          {item.notes && (
+            <p className="mt-2 text-xs font-medium text-slate-600 whitespace-pre-wrap break-words">
+              {item.notes}
+            </p>
+          )}
+          {type === 'opportunity' && item.source && (
+            <p className="mt-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              {t('source')}: {item.source}
+            </p>
+          )}
           {type === 'task' ? (
             <div className="mt-2 flex flex-wrap gap-2">
               <span className="text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-widest bg-white border border-slate-100 text-slate-600">{t('status')}: {item.status}</span>
@@ -295,22 +307,6 @@ const StatusDetailsModal = ({ type, itemId, onClose }) => {
       </div>
     </div>
   );
-};
-
-/* --- sendTaskEmail helper (uses existing EmailJS) --------------------------- */
-const sendTaskEmail = async ({ toEmail, toName, taskTitle, taskNotes, dueDate, priority, assignedBy }) => {
-  try {
-    const emailjs = await import('@emailjs/browser');
-    const SERVICE  = import.meta.env.VITE_EMAILJS_SERVICE_ID;
-    const TEMPLATE = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
-    const KEY      = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
-    if (!SERVICE || !TEMPLATE || !KEY || !toEmail) return;
-    await emailjs.default.send(SERVICE, TEMPLATE, {
-      to_email: toEmail, to_name: toName,
-      from_name: 'DrWEEE Flow',
-      message: `New task assigned to you by ${assignedBy}:\n\nTask: ${taskTitle}\nNotes: ${taskNotes || '--'}\nDeadline: ${dueDate || '--'}\nPriority: ${priority}`,
-    }, KEY);
-  } catch (e) { console.warn('[TaskEmail]', e); }
 };
 
 // --- Edit Task Modal ----------------------------------------------------------
@@ -581,7 +577,7 @@ const TaskEngine = () => {
     return tasks.filter(task => {
       if (task._archived) return false;
       if (isAdmin || isCEO) return true;
-      if (task.taskType === 'bonus') return (!task.employeeId || task.employeeId === currentUser.id);
+      // User sees only tasks assigned to them
       if (task.employeeId === currentUser.id) return true;
       return false;
     }).filter(task => {
@@ -663,7 +659,7 @@ const TaskEngine = () => {
     const ref = await addDoc(collection(db, 'tasks'), newTask);
     syncTaskCreated({ ...newTask, id: ref.id });
     if (!isBonus && assignedUser.email && assignedUser.id !== currentUser.id) {
-      sendTaskEmail({ toEmail: assignedUser.email, toName: assignedUser.username, taskTitle: formData.title, taskNotes: formData.notes, dueDate: formData.dueDate, priority: formData.priority, assignedBy: currentUser.username }).catch(() => {});
+      sendTaskAssignmentEmail({ toEmail: assignedUser.email, toName: assignedUser.username, taskTitle: formData.title, taskNotes: formData.notes, dueDate: formData.dueDate, priority: formData.priority, assignedBy: currentUser.username }).catch(() => {});
     }
     // If task has money, show attachment popup
     if (formData.amount && Number(formData.amount) > 0) {
@@ -753,6 +749,7 @@ const TaskEngine = () => {
 
   const FILTER_LABELS = { all: t('all'), pending: t('pending'), 'in progress': t('inProgress'), completed: t('completed'), bonus: t('bonus') };
   const STAGE_COLORS = { Lead:'bg-blue-50 text-blue-600', Qualified:'bg-cyan-50 text-cyan-600', Negotiation:'bg-amber-50 text-amber-600', Proposal:'bg-violet-50 text-violet-600', Contract:'bg-emerald-50 text-emerald-600', 'Closed Won':'bg-green-100 text-green-700', 'Closed Lost':'bg-red-50 text-red-500' };
+  const canSeeManagementInsights = isAdmin || isCEO;
 
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -773,13 +770,13 @@ const TaskEngine = () => {
               <span className="text-[10px] font-black uppercase tracking-widest">{smartInsights.urgentDeadlines.length} deadline{smartInsights.urgentDeadlines.length !== 1 ? 's' : ''} in 48h</span>
             </div>
           )}
-          {smartInsights.archivedTasks > 0 && (
+          {canSeeManagementInsights && smartInsights.archivedTasks > 0 && (
             <div className="flex items-center gap-1.5 bg-slate-100 text-slate-500 px-3 py-1.5 rounded-xl">
               <CheckCircle2 size={12}/>
               <span className="text-[10px] font-black uppercase tracking-widest">{smartInsights.archivedTasks} auto-archived</span>
             </div>
           )}
-          {smartInsights.topPerformer && (
+          {canSeeManagementInsights && smartInsights.topPerformer && (
             <div className="flex items-center gap-1.5 bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-xl">
               <Star size={12}/>
               <span className="text-[10px] font-black uppercase tracking-widest">Top: {smartInsights.topPerformer.username} ({smartInsights.topPerformer.completed})</span>
@@ -919,6 +916,13 @@ const TaskEngine = () => {
                     </div>
                   </div>
                   <h4 className="text-base md:text-lg font-black text-slate-800 mb-1.5 leading-snug">{task.title}</h4>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setStatusModal({ type: 'task', id: task.id }); }}
+                    className="mb-2 text-[10px] font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-800"
+                  >
+                    {t('statusDetails')}
+                  </button>
                   {task.notes && <p className="text-sm text-slate-400 mb-1.5 italic line-clamp-2">"{task.notes}"</p>}
                   {task.adminNote && <div className="my-2 px-3 py-2 bg-indigo-50 rounded-xl border border-indigo-100"><p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Admin</p><p className="text-sm text-indigo-700 font-medium">{task.adminNote}</p></div>}
                   <div className="flex items-center gap-3 mb-3">
@@ -978,6 +982,13 @@ const TaskEngine = () => {
                     </div>
                   </div>
                   <h4 className="text-base md:text-lg font-black text-slate-800 mb-1.5 leading-snug">{opp.client}</h4>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setStatusModal({ type: 'opportunity', id: opp.id }); }}
+                    className="mb-2 text-[10px] font-black uppercase tracking-widest text-emerald-600 hover:text-emerald-800"
+                  >
+                    {t('statusDetails')}
+                  </button>
                   <p className="text-[10px] text-slate-400 font-bold mb-1">{oppTypeLabel(opp.opportunityType)}{opp.source ? ` - ${opp.source}` : ''}</p>
                   <div className="flex items-center gap-2 mb-1.5">
                     {opp.estValue > 0 && <p className="text-sm font-black text-emerald-600 flex items-center gap-0.5"><DollarSign size={12}/> {Number(opp.estValue).toLocaleString()} {opp.currency}</p>}

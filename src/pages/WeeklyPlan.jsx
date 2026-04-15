@@ -18,10 +18,36 @@ const EVENT_STATUS = { done: 'bg-emerald-50 text-emerald-600 border-emerald-200'
 const PRIORITY_STYLE = { High: 'bg-red-50 text-red-500', Medium: 'bg-amber-50 text-amber-500', Low: 'bg-blue-50 text-blue-500' };
 
 // ─── Event Form (Add / Edit) ─────────────────────────────────────────────────
-const EventPopup = ({ date, event, onClose, existingEvents, readOnly }) => {
-  const { currentUser, users, groups, tasks, opportunities, isAdmin, addNotification, lang } = useAppContext();
+const EventPopup = ({ date, event, onClose, existingEvents, readOnly, dayTasksSource, dayOppsSource }) => {
+  const { currentUser, users, groups, isAdmin, addNotification, lang } = useAppContext();
   const t = useT();
   const isEdit = !!event;
+  const stageLabel = (stage) => {
+    const map = {
+      'Lead': 'stageLead',
+      'Qualified': 'stageQualified',
+      'Negotiation': 'stageNegotiation',
+      'Proposal': 'stageProposal',
+      'Contract': 'stageContract',
+      'Closed Won': 'stageClosedWon',
+      'Closed Lost': 'stageClosedLost',
+    };
+    return t(map[stage] || 'stageLead');
+  };
+  const oppTypeLabel = (ot) => {
+    const map = {
+      'Shipment': 'oppTypeShipment',
+      'Strategic Project': 'oppTypeStrategicProject',
+      'Collection Contract': 'oppTypeCollectionContract',
+      'Supply Contract': 'oppTypeSupplyContract',
+      'Partnership': 'oppTypePartnership',
+      'Franchise License': 'oppTypeFranchiseLicense',
+      'Bulk Purchase': 'oppTypeBulkPurchase',
+      'Project': 'oppTypeProject',
+      'Distribution': 'oppTypeDistribution',
+    };
+    return t(map[ot] || 'opportunityType');
+  };
 
   const [title, setTitle] = useState(event?.title || '');
   const [notes, setNotes] = useState(event?.notes || '');
@@ -32,11 +58,11 @@ const EventPopup = ({ date, event, onClose, existingEvents, readOnly }) => {
 
   const dayStr = date.toDateString();
   const dayEvents = existingEvents.filter(e => e.date === dayStr && e.id !== event?.id);
-  const dayTasks = tasks.filter(tk => {
+  const dayTasks = (dayTasksSource || []).filter(tk => {
     if (tk.dueDate) { const d = new Date(tk.dueDate); d.setHours(0,0,0,0); return d.toDateString() === dayStr; }
     return tk.status === 'in progress' && new Date().toDateString() === dayStr;
   });
-  const dayOpps = (opportunities || []).filter(opp => {
+  const dayOpps = (dayOppsSource || []).filter(opp => {
     if (opp._archived) return false;
     if (opp.nextActionDate) {
       const d = new Date(opp.nextActionDate);
@@ -133,7 +159,7 @@ const EventPopup = ({ date, event, onClose, existingEvents, readOnly }) => {
                 return (
                   <div key={opp.id} className="p-3 bg-rose-50 border border-rose-100 rounded-xl">
                     <div className="flex justify-between items-start mb-1">
-                      <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">{opp.stage}</span>
+                      <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">{stageLabel(opp.stage)}</span>
                       <div className="flex gap-1">
                         {assignedIds.map(uid => {
                           const u = users.find(x => x.id === uid);
@@ -142,6 +168,7 @@ const EventPopup = ({ date, event, onClose, existingEvents, readOnly }) => {
                       </div>
                     </div>
                     <p className="text-sm font-black text-slate-800">{opp.client}</p>
+                    {opp.opportunityType && <p className="text-[10px] text-rose-500 font-bold mt-0.5">{oppTypeLabel(opp.opportunityType)}</p>}
                     {opp.notes && <p className="text-[10px] text-slate-400 italic mt-0.5">"{opp.notes}"</p>}
                   </div>
                 );
@@ -512,24 +539,23 @@ const WeeklyPlan = () => {
           {calGrid.map((day, idx) => {
             if (!day) return <div key={`blank-${idx}`} className="aspect-square md:aspect-auto md:min-h-[90px] border-b border-e border-slate-50 last:border-e-0"/>;
             const dayStr = day.toDateString(); const isToday = isSameDay(day, today); const isPast = day < today;
-            const dayEvents_ = isAdmin ? (eventsByDay[dayStr] || []) : [];
+            const dayEvents_ = eventsByDay[dayStr] || [];
             const dayTasks_ = tasksByDay[dayStr] || [];
             const dayOpps_ = oppsByDay[dayStr] || [];
-            const hasContent = dayTasks_.length > 0 || dayOpps_.length > 0 || (isAdmin && dayEvents_.length > 0);
+            const hasContent = dayTasks_.length > 0 || dayOpps_.length > 0 || dayEvents_.length > 0;
             const colIdx = idx % 7; const isLastCol = colIdx === 6; const isLastRow = idx >= calGrid.length - 7;
             return (
               <button
                 key={dayStr}
-                onClick={() => { if (!isAdmin) return; setEditingEvent(null); setSelectedDay(day); }}
-                disabled={!isAdmin}
-                className={`aspect-square md:aspect-auto md:min-h-[90px] p-2 border-b border-e border-slate-50 text-start transition-all relative group ${isAdmin ? 'hover:bg-indigo-50/50' : 'cursor-default'} ${isLastCol ? 'border-e-0' : ''} ${isLastRow ? 'border-b-0' : ''}`}
+                onClick={() => { setEditingEvent(null); setSelectedDay(day); }}
+                className={`aspect-square md:aspect-auto md:min-h-[90px] p-2 border-b border-e border-slate-50 text-start transition-all relative group hover:bg-indigo-50/50 ${isLastCol ? 'border-e-0' : ''} ${isLastRow ? 'border-b-0' : ''}`}
               >
                 <div className={`inline-flex w-7 h-7 items-center justify-center rounded-full text-sm font-black transition-colors ${isToday ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200' : isPast ? 'text-slate-300' : 'text-slate-700 group-hover:text-indigo-600'}`}>{day.getDate()}</div>
                 {hasContent && (
                   <div className="flex flex-wrap gap-0.5 mt-1">
                     {dayTasks_.slice(0,3).map((tk,i) => <div key={i} className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[tk.status]||'bg-slate-300'}`}/>)}
                     {dayOpps_.slice(0,3).map((_,i) => <div key={`o${i}`} className="w-1.5 h-1.5 rounded-full bg-rose-400"/>)}
-                    {isAdmin && dayEvents_.slice(0,2).map((_,i) => <div key={`e${i}`} className="w-1.5 h-1.5 rounded-full bg-violet-400"/>)}
+                    {dayEvents_.slice(0,2).map((_,i) => <div key={`e${i}`} className="w-1.5 h-1.5 rounded-full bg-violet-400"/>)}
                   </div>
                 )}
                 {isAdmin && (
@@ -566,13 +592,15 @@ const WeeklyPlan = () => {
         </>
       )}
 
-      {isAdmin && selectedDay && (
+      {selectedDay && (
         <EventPopup
           date={selectedDay}
           event={editingEvent}
           existingEvents={visibleEvents}
           onClose={() => { setSelectedDay(null); setEditingEvent(null); }}
           readOnly={!isAdmin}
+          dayTasksSource={visibleTasks}
+          dayOppsSource={visibleOpps}
         />
       )}
     </div>

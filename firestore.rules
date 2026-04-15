@@ -6,11 +6,11 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if true;
 
-      allow create: if request.resource.data.keys().hasAll(['id', 'username', 'role'])
+      allow create: if request.resource.data.keys().hasAll(['username', 'role'])
         && request.resource.data.role in ['user', 'admin', 'ceo']
         && request.resource.data.get('permanent', false) == false;
 
-      allow update: if request.resource.data.keys().hasAll(['id', 'username', 'role'])
+      allow update: if request.resource.data.keys().hasAll(['username', 'role'])
         && request.resource.data.role in ['user', 'admin', 'ceo'];
 
       allow delete: if resource.data.get('permanent', false) == false;

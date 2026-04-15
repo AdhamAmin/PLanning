@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { db } from '../firebase';
-import { mergeWithSeed, SEED_USERS } from '../archive/db';
+import { SEED_USERS } from '../archive/db';
+import { getUserEmployeeId, normalizeEmployeeId, normalizeUserRecord } from '../utils/userIdentity';
 import {
-  collection, doc, onSnapshot, setDoc, addDoc, deleteDoc,
-  updateDoc, query, orderBy, serverTimestamp, getDocs
+  collection, doc, onSnapshot, setDoc, addDoc,
+  updateDoc, query, orderBy, serverTimestamp
 } from 'firebase/firestore';
 
 export const AppContext = createContext();
@@ -19,10 +20,14 @@ const SMART_CONFIG = {
   staleOpportunityDays: 14,                    // flag opps with no action for 14 days
   autoArchiveCheckInterval: 5 * 60 * 1000,    // check every 5 minutes
 };
+const LIVE_MAP_SPECIAL_USER_ID = '20071';
+const ENABLE_DEMO_USER_SEED =
+  import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_USER_SEED === 'true';
 
 export const AppProvider = ({ children }) => {
   const [currentUser, setCurrentUser]   = useState(null);
   const [users, setUsers]               = useState([]);
+  const [usersLoaded, setUsersLoaded]   = useState(false);
   const [tasks, setTasks]               = useState([]);
   const [opportunities, setOpportunities] = useState([]);
   const [messages, setMessages]         = useState([]);
@@ -40,6 +45,7 @@ export const AppProvider = ({ children }) => {
   const usersRef = useRef(users);
   const eventsRef = useRef(events);
   const currentUserRef = useRef(currentUser);
+  const didSeedUsersRef = useRef(false);
   tasksRef.current = tasks;
   oppsRef.current = opportunities;
   usersRef.current = users;
@@ -61,14 +67,16 @@ export const AppProvider = ({ children }) => {
   const canAccessPage = useCallback((pageKey) => {
     if (!currentUser) return false;
     if (pageKey === 'alerts') return true;
+    if (pageKey === 'live-map') return currentUser.id === LIVE_MAP_SPECIAL_USER_ID;
+    // User role must always have Tasks + Planner (user planner only)
+    if (currentUser.role === 'user' && (pageKey === 'tasks' || pageKey === 'planner')) return true;
     const pages = Array.isArray(currentUser.allowedPages) && currentUser.allowedPages.length > 0
       ? currentUser.allowedPages
       : getDefaultPagesForRole(currentUser.role);
     // Safety: never allow non-admin to access admin-only pages via allowedPages
     if (pageKey === 'efficiency' && !isAdmin) return false;
-    if (pageKey === 'live-map' && !isCEO) return false;
     return pages.includes(pageKey);
-  }, [currentUser, getDefaultPagesForRole, isAdmin, isCEO]);
+  }, [currentUser, getDefaultPagesForRole, isAdmin]);
 
   // RTL/LTR Body Direction Manager
   useEffect(() => {
@@ -79,7 +87,7 @@ export const AppProvider = ({ children }) => {
   // Session Restore
   useEffect(() => {
     const session = localStorage.getItem('tf_session');
-    if (session) setCurrentUser(JSON.parse(session));
+    if (session) setCurrentUser(normalizeUserRecord(JSON.parse(session)));
   }, []);
 
   // Keep session user in sync with Firestore (role/username/email changes)
@@ -99,24 +107,36 @@ export const AppProvider = ({ children }) => {
       updateDoc(doc(db, 'users', currentUser.id), { allowedPages: defaults }).catch(() => {});
     }
     // Avoid re-render loop: only update if something meaningful changed
-    const keysToCheck = ['role', 'allowedPages', 'username', 'email', 'phone', 'nickname', 'isOnline', 'permanent'];
+    const keysToCheck = ['role', 'allowedPages', 'username', 'email', 'phone', 'nickname', 'employeeId', 'isOnline', 'permanent'];
     const changed = keysToCheck.some(k => merged[k] !== currentUser[k]);
     if (changed) {
-      setCurrentUser(merged);
-      localStorage.setItem('tf_session', JSON.stringify(merged));
+      const normalizedMerged = normalizeUserRecord(merged);
+      setCurrentUser(normalizedMerged);
+      localStorage.setItem('tf_session', JSON.stringify(normalizedMerged));
     }
   }, [users, currentUser?.id]); // intentionally not depending on full currentUser object
 
-  // Seed DB (run once)
+  // Demo seeding is opt-in only so normal app startup never creates or rewrites user records.
   useEffect(() => {
+    if (!ENABLE_DEMO_USER_SEED) return;
+    if (!usersLoaded || users.length > 0 || didSeedUsersRef.current) return;
+
+    didSeedUsersRef.current = true;
+
     const seedFirestore = async () => {
-      for (const u of SEED_USERS) {
-        const ref = doc(db, 'users', u.id);
-        await setDoc(ref, u, { merge: true });
+      try {
+        for (const u of SEED_USERS) {
+          const ref = doc(db, 'users', u.id);
+          await setDoc(ref, u);
+        }
+      } catch (err) {
+        didSeedUsersRef.current = false;
+        console.warn('[seedFirestore] Error:', err.message);
       }
     };
+
     seedFirestore();
-  }, []);
+  }, [usersLoaded, users.length]);
 
   // Presence
   useEffect(() => {
@@ -139,6 +159,7 @@ export const AppProvider = ({ children }) => {
 
     const userRef = doc(db, 'users', currentUser.id);
     let watchId = null;
+    let startupTimer = null;
     let lastWriteMs = 0;
     let lastLat = null;
     let lastLng = null;
@@ -153,33 +174,43 @@ export const AppProvider = ({ children }) => {
       return (dLat + dLng) > 0.0002;
     };
 
-    watchId = navigator.geolocation.watchPosition(
-      async (pos) => {
-        const { latitude, longitude, accuracy } = pos.coords || {};
-        if (typeof latitude !== 'number' || typeof longitude !== 'number') return;
-        const nowMs = Date.now();
-        if (!shouldWrite(latitude, longitude, nowMs)) return;
+    const startWatchingLocation = () => {
+      watchId = navigator.geolocation.watchPosition(
+        async (pos) => {
+          const { latitude, longitude, accuracy } = pos.coords || {};
+          if (typeof latitude !== 'number' || typeof longitude !== 'number') return;
+          const nowMs = Date.now();
+          if (!shouldWrite(latitude, longitude, nowMs)) return;
 
-        lastWriteMs = nowMs;
-        lastLat = latitude;
-        lastLng = longitude;
+          lastWriteMs = nowMs;
+          lastLat = latitude;
+          lastLng = longitude;
 
-        try {
-          await updateDoc(userRef, {
-            location: { lat: latitude, lng: longitude, accuracy: accuracy ?? null },
-            locationUpdatedAt: serverTimestamp(),
-          });
-        } catch (err) {
-          // silent: offline/permissions/network
+          try {
+            await updateDoc(userRef, {
+              location: { lat: latitude, lng: longitude, accuracy: accuracy ?? null },
+              locationUpdatedAt: serverTimestamp(),
+            });
+          } catch (err) {
+            // silent: offline/permissions/network
+          }
+        },
+        () => {
+          // permission denied or unavailable — do nothing
+        },
+        {
+          enableHighAccuracy: false,
+          maximumAge: 60 * 1000,
+          timeout: 20 * 1000,
         }
-      },
-      () => {
-        // permission denied or unavailable — do nothing
-      },
-      { enableHighAccuracy: true, maximumAge: 15 * 1000, timeout: 12 * 1000 }
-    );
+      );
+    };
+
+    // Let the first screen paint before spinning up background GPS work.
+    startupTimer = window.setTimeout(startWatchingLocation, 1500);
 
     return () => {
+      if (startupTimer != null) window.clearTimeout(startupTimer);
       if (watchId != null) navigator.geolocation.clearWatch(watchId);
     };
   }, [currentUser?.id]);
@@ -456,7 +487,8 @@ export const AppProvider = ({ children }) => {
     const unsubs = [];
 
     unsubs.push(onSnapshot(collection(db, 'users'), snap => {
-      setUsers(snap.docs.map(d => ({ ...d.data(), id: d.id })));
+      setUsers(snap.docs.map(d => normalizeUserRecord({ ...d.data(), id: d.id })));
+      setUsersLoaded(true);
     }, err => console.warn('[Firestore] users listener error:', err.message)));
 
     unsubs.push(onSnapshot(collection(db, 'tasks'), snap => {
@@ -551,8 +583,9 @@ export const AppProvider = ({ children }) => {
     if ('Notification' in window && Notification.permission !== 'granted') {
       Notification.requestPermission();
     }
-    setCurrentUser(user);
-    localStorage.setItem('tf_session', JSON.stringify(user));
+    const normalizedUser = normalizeUserRecord(user);
+    setCurrentUser(normalizedUser);
+    localStorage.setItem('tf_session', JSON.stringify(normalizedUser));
   }, []);
 
   const logoutUser = useCallback(async () => {
@@ -568,11 +601,37 @@ export const AppProvider = ({ children }) => {
 
   const updateUserProfile = useCallback(async (userId, updates) => {
     try {
+      const sanitizedUpdates = {};
+      if (Object.prototype.hasOwnProperty.call(updates, 'username')) sanitizedUpdates.username = (updates.username ?? '').trim();
+      if (Object.prototype.hasOwnProperty.call(updates, 'email')) sanitizedUpdates.email = (updates.email ?? '').trim();
+      if (Object.prototype.hasOwnProperty.call(updates, 'phone')) sanitizedUpdates.phone = (updates.phone ?? '').trim();
+      if (Object.prototype.hasOwnProperty.call(updates, 'nickname')) sanitizedUpdates.nickname = (updates.nickname ?? '').trim();
+      if (Object.prototype.hasOwnProperty.call(updates, 'role')) sanitizedUpdates.role = updates.role;
+      if (Object.prototype.hasOwnProperty.call(updates, 'allowedPages')) {
+        sanitizedUpdates.allowedPages = Array.isArray(updates.allowedPages) ? updates.allowedPages : [];
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'permanent')) sanitizedUpdates.permanent = updates.permanent;
+      if (Object.prototype.hasOwnProperty.call(updates, 'isOnline')) sanitizedUpdates.isOnline = updates.isOnline;
+
+      if (Object.prototype.hasOwnProperty.call(updates, 'employeeId')) {
+        const employeeId = normalizeEmployeeId(updates.employeeId);
+        if (!employeeId) return { success: false, error: 'Employee ID is required.' };
+
+        const duplicate = usersRef.current.find(
+          (user) => user.id !== userId && getUserEmployeeId(user).toLowerCase() === employeeId.toLowerCase()
+        );
+        if (duplicate) return { success: false, error: 'Employee ID already exists.' };
+
+        sanitizedUpdates.employeeId = employeeId;
+      }
+
+      if (Object.keys(sanitizedUpdates).length === 0) return { success: true };
+
       const userRef = doc(db, 'users', userId);
-      await updateDoc(userRef, updates);
+      await updateDoc(userRef, sanitizedUpdates);
 
       if (currentUserRef.current?.id === userId) {
-        const updatedUser = { ...currentUserRef.current, ...updates };
+        const updatedUser = normalizeUserRecord({ ...currentUserRef.current, ...sanitizedUpdates });
         setCurrentUser(updatedUser);
         localStorage.setItem('tf_session', JSON.stringify(updatedUser));
       }
@@ -585,83 +644,9 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   // ── Change User ID (system-wide update) ──────────────────────────────────
-  const changeUserId = useCallback(async (oldId, newId) => {
-    if (!oldId || !newId || oldId === newId) return { success: false, error: 'Invalid IDs' };
-    const existingUser = usersRef.current.find(u => u.id === newId);
-    if (existingUser) return { success: false, error: 'ID already in use' };
-
-    try {
-      const oldUserData = usersRef.current.find(u => u.id === oldId);
-      if (!oldUserData) return { success: false, error: 'User not found' };
-
-      const { id: _, ...userData } = oldUserData;
-      await setDoc(doc(db, 'users', newId), { ...userData, id: newId, previousId: oldId });
-
-      const tasksSnap = await getDocs(collection(db, 'tasks'));
-      for (const taskDoc of tasksSnap.docs) {
-        const data = taskDoc.data();
-        if (data.employeeId === oldId) await updateDoc(doc(db, 'tasks', taskDoc.id), { employeeId: newId });
-        if (data.creatorId === oldId) await updateDoc(doc(db, 'tasks', taskDoc.id), { creatorId: newId });
-      }
-
-      const oppsSnap = await getDocs(collection(db, 'opportunities'));
-      for (const oppDoc of oppsSnap.docs) {
-        const actualAssignedTo = oppDoc.data().assignedTo;
-        if (Array.isArray(actualAssignedTo)) {
-          if (actualAssignedTo.includes(oldId)) {
-            await updateDoc(doc(db, 'opportunities', oppDoc.id), {
-              assignedTo: actualAssignedTo.map(id => id === oldId ? newId : id)
-            });
-          }
-        } else if (actualAssignedTo === oldId) {
-          await updateDoc(doc(db, 'opportunities', oppDoc.id), { assignedTo: newId });
-        }
-      }
-
-      const msgsSnap = await getDocs(collection(db, 'messages'));
-      for (const msgDoc of msgsSnap.docs) {
-        const data = msgDoc.data();
-        const msgUpdates = {};
-        if (data.senderId === oldId) msgUpdates.senderId = newId;
-        if (data.receiverId === oldId) msgUpdates.receiverId = newId;
-        if (Object.keys(msgUpdates).length > 0) await updateDoc(doc(db, 'messages', msgDoc.id), msgUpdates);
-      }
-
-      const groupsSnap = await getDocs(collection(db, 'groups'));
-      for (const grpDoc of groupsSnap.docs) {
-        const data = grpDoc.data();
-        const grpUpdates = {};
-        if ((data.members || []).includes(oldId)) grpUpdates.members = data.members.map(m => m === oldId ? newId : m);
-        if ((data.adminIds || []).includes(oldId)) grpUpdates.adminIds = data.adminIds.map(m => m === oldId ? newId : m);
-        if (Object.keys(grpUpdates).length > 0) await updateDoc(doc(db, 'groups', grpDoc.id), grpUpdates);
-      }
-
-      const eventsSnap = await getDocs(collection(db, 'events'));
-      for (const evDoc of eventsSnap.docs) {
-        const data = evDoc.data();
-        if (data.assignedTo === oldId || data.creatorId === oldId) {
-          const evUpdates = {};
-          if (data.assignedTo === oldId) evUpdates.assignedTo = newId;
-          if (data.creatorId === oldId) evUpdates.creatorId = newId;
-          await updateDoc(doc(db, 'events', evDoc.id), evUpdates);
-        }
-      }
-
-      await deleteDoc(doc(db, 'users', oldId));
-
-      if (currentUserRef.current?.id === oldId) {
-        const updatedUser = { ...currentUserRef.current, id: newId };
-        setCurrentUser(updatedUser);
-        localStorage.setItem('tf_session', JSON.stringify(updatedUser));
-      }
-
-      await addNotificationFn(`User ID changed from ${oldId} to ${newId}`, 'info', 'admin');
-      return { success: true };
-    } catch (err) {
-      console.error('[changeUserId] Error:', err);
-      return { success: false, error: err.message };
-    }
-  }, [addNotificationFn]);
+  const changeUserId = useCallback((userId, nextEmployeeId) => {
+    return updateUserProfile(userId, { employeeId: nextEmployeeId });
+  }, [updateUserProfile]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // SMART INSIGHTS (computed, available to all components)

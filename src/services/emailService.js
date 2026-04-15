@@ -49,14 +49,10 @@ export const sendCredentialsEmail = async ({ username, id, email, role }) => {
     message:     `مرحباً ${username}،\n\nتم تسجيلك في نظام DrWEEE Flow.\n\nبيانات الدخول:\nاسم المستخدم: ${username}\nرقم الموظف: ${id}\nالوظيفة: ${role}\n\nرابط الدخول: ${SITE_URL}`,
   };
 
-  console.log('[EmailJS] Attempting to send to:', email);
-
   try {
     const res = await emailjs.send(SERVICE_ID, TEMPLATE_ID, templateParams, PUBLIC_KEY);
-    console.log('[EmailJS] Response:', res.status, res.text);
 
     if (res.status === 200 || res.text === 'OK') {
-      console.log('[EmailJS] ✅ Email sent successfully to', email);
       return { success: true, method: 'emailjs' };
     }
 
@@ -75,5 +71,27 @@ export const sendCredentialsEmail = async ({ username, id, email, role }) => {
     }
 
     return { success: false, method: 'failed', error: errMsg };
+  }
+};
+
+export const sendTaskAssignmentEmail = async ({ toEmail, toName, taskTitle, taskNotes, dueDate, priority, assignedBy }) => {
+  if (!PUBLIC_KEY || !SERVICE_ID || !TEMPLATE_ID || !toEmail) return { success: false, error: 'Missing config or email' };
+  try {
+    const message = `New task assigned to you by ${assignedBy}:\n\nTask: ${taskTitle}\nNotes: ${taskNotes || '--'}\nDeadline: ${dueDate || '--'}\nPriority: ${priority || 'Medium'}`;
+    const res = await emailjs.send(SERVICE_ID, TEMPLATE_ID, {
+      to_email: toEmail,
+      to_name: toName || 'User',
+      from_name: 'DrWEEE Flow',
+      reply_to: 'noreply@drweee.app',
+      message,
+      task_title: taskTitle,
+      task_notes: taskNotes || '',
+      due_date: dueDate || '',
+      priority: priority || 'Medium',
+      assigned_by: assignedBy || '',
+    }, PUBLIC_KEY);
+    return { success: res.status === 200 || res.text === 'OK' };
+  } catch (err) {
+    return { success: false, error: err?.message || String(err) };
   }
 };

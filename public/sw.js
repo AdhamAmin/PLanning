@@ -1,6 +1,6 @@
 // DrWEEE Flow Service Worker — Auto-Update + Push Notifications
 // Version is auto-stamped at build time. Change this on every deploy:
-const CACHE_VERSION = '20260405_1821';
+const CACHE_VERSION = '20260416_0035';
 const CACHE_NAME = 'drweee-v' + CACHE_VERSION;
 
 // Install: skip waiting to activate immediately on all devices (including iOS)
@@ -25,21 +25,32 @@ self.addEventListener('activate', (event) => {
 });
 
 // Fetch strategy:
-// - Navigation (HTML): Network-only (always fresh, no stale pages)
+// - Navigation (HTML): Network-first + safe fallback to cached app shell
 // - Hashed assets (/assets/): Cache-first (immutable, fast)
 // - Other GET: Network-first with cache fallback
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   if (!event.request.url.startsWith('http')) return;
 
-  // HTML navigation — always network, never serve stale HTML
+  // HTML navigation — prefer fresh network HTML.
+  // If network fails, fall back to cached navigation or cached app shell.
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() =>
-        caches.match(event.request).then((cached) =>
-          cached || new Response('Offline', { status: 503, statusText: 'Service Unavailable' })
+      fetch(event.request)
+        .then((res) => {
+          if (res && res.status === 200) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(event.request, clone));
+          }
+          return res;
+        })
+        .catch(() =>
+          caches.match(event.request)
+            .then((cached) => cached || caches.match('/index.html'))
+            .then((cached) =>
+              cached || new Response('Offline', { status: 503, statusText: 'Service Unavailable' })
+            )
         )
-      )
     );
     return;
   }

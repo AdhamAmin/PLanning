@@ -6,42 +6,42 @@ import { AppProvider } from './context/AppContext.jsx'
 
 // ── PWA Auto-Update (iOS + Android + Desktop) ──────────────────────────────
 if ('serviceWorker' in navigator) {
-  // Guard against infinite reload loops
   const RELOAD_KEY = 'sw_reload_ts';
+  const UPDATE_CHECK_KEY = 'sw_last_update_check';
+  const MIN_UPDATE_CHECK_MS = 5 * 60 * 1000;
   const safeReload = () => {
     const last = parseInt(sessionStorage.getItem(RELOAD_KEY) || '0', 10);
     const now = Date.now();
-    // Only reload if last reload was more than 5 seconds ago
-    if (now - last > 5000) {
+    if (now - last > 15000) {
       sessionStorage.setItem(RELOAD_KEY, String(now));
       window.location.reload();
     }
   };
 
+  const requestServiceWorkerUpdate = () => {
+    const now = Date.now();
+    const lastCheck = parseInt(sessionStorage.getItem(UPDATE_CHECK_KEY) || '0', 10);
+    if (now - lastCheck < MIN_UPDATE_CHECK_MS) return;
+    sessionStorage.setItem(UPDATE_CHECK_KEY, String(now));
+    navigator.serviceWorker.ready.then((reg) => reg.update()).catch(() => {});
+  };
+
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then((reg) => {
-      // Check for updates often so installed PWA picks up new deploys quickly
-      setInterval(() => reg.update(), 30000);
-
       // When a new service worker is found
       reg.addEventListener('updatefound', () => {
         const newWorker = reg.installing;
         if (newWorker) {
           newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'activated') {
+            if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
               safeReload();
             }
           });
         }
       });
-    }).catch(() => {});
 
-    // Listen for SW_UPDATED message from service worker
-    navigator.serviceWorker.addEventListener('message', (event) => {
-      if (event.data && event.data.type === 'SW_UPDATED') {
-        safeReload();
-      }
-    });
+      requestServiceWorkerUpdate();
+    }).catch(() => {});
 
     // iOS: when the controller changes (new SW takes over), reload
     let refreshing = false;
@@ -56,21 +56,21 @@ if ('serviceWorker' in navigator) {
   // iOS PWA: check for updates when app comes back to foreground
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.ready.then((reg) => reg.update());
+      requestServiceWorkerUpdate();
     }
   });
 
   // Also check on focus (covers iOS switching back to the app)
   window.addEventListener('focus', () => {
     if (navigator.serviceWorker.controller) {
-      navigator.serviceWorker.ready.then((reg) => reg.update());
+      requestServiceWorkerUpdate();
     }
   });
 
   // BFCache / iOS: page restored from memory — recheck for new SW
   window.addEventListener('pageshow', (event) => {
     if (event.persisted && navigator.serviceWorker?.controller) {
-      navigator.serviceWorker.ready.then((reg) => reg.update());
+      requestServiceWorkerUpdate();
     }
   });
 }

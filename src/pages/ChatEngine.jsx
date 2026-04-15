@@ -11,6 +11,7 @@ import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, doc, updateDoc, serverTimestamp, writeBatch, getDocs, query, where, onSnapshot } from 'firebase/firestore';
 import { PROTECTED_IDS } from '../archive/db';
 import useT from '../i18n/useT';
+import { getUserEmployeeId, normalizeEmployeeId } from '../utils/userIdentity';
 // --- Task Detail Popup --------------------------------------------------------
 const TaskDetailPopup = ({ task, onClose }) => {
   const navigate = useNavigate();
@@ -50,7 +51,7 @@ const EditUserRolePopup = ({ user, onClose }) => {
   const handleSave = async (e) => {
     e.preventDefault();
     if (PROTECTED_IDS.includes(user.id) && role !== user.role) { setError('This user is protected. Role cannot be changed.'); return; }
-    if (adminId !== currentUser.id) { setError('Admin ID does not match.'); return; }
+    if (normalizeEmployeeId(adminId) !== getUserEmployeeId(currentUser)) { setError('Admin ID does not match.'); return; }
     setSaving(true);
     await updateDoc(doc(db, 'users', user.id), { role });
     addNotification(`Role updated to "${role}" by Admin.`, 'info', user.id);
@@ -61,7 +62,7 @@ const EditUserRolePopup = ({ user, onClose }) => {
       <div className="absolute inset-0 bg-slate-900/70 backdrop-blur-md" onClick={onClose}/>
       <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl relative animate-in zoom-in-95 duration-200">
         <div className="flex justify-between items-center mb-5"><h3 className="text-lg font-black text-slate-800 flex items-center gap-2"><Pencil size={16} className="text-indigo-500"/> Edit Role</h3><button onClick={onClose} className="p-2 bg-slate-50 rounded-xl text-slate-400 hover:text-slate-700"><X size={16}/></button></div>
-        <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl mb-5"><div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center font-black text-indigo-600 text-lg">{user.username.charAt(0).toUpperCase()}</div><div><p className="font-black text-slate-800 text-sm">{user.username}</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{user.id}</p></div></div>
+        <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl mb-5"><div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center font-black text-indigo-600 text-lg">{user.username.charAt(0).toUpperCase()}</div><div><p className="font-black text-slate-800 text-sm">{user.username}</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{getUserEmployeeId(user)}</p></div></div>
         <form onSubmit={handleSave} className="space-y-4">
           <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ms-1">New Role</label>
             <select value={role} onChange={e => setRole(e.target.value)} className="w-full p-3.5 bg-slate-50 rounded-2xl outline-none font-black text-slate-800 text-sm">{ROLES.map(r => <option key={r} value={r}>{r.toUpperCase()}</option>)}</select></div>
@@ -465,7 +466,7 @@ const ChatEngine = () => {
     const others = users.filter(u => u.id !== currentUser?.id);
     if (!searchQuery.trim()) return others;
     const q = searchQuery.toLowerCase();
-    return others.filter(u => u.username.toLowerCase().includes(q) || u.id.includes(q));
+    return others.filter(u => u.username.toLowerCase().includes(q) || getUserEmployeeId(u).toLowerCase().includes(q));
   }, [users, currentUser, searchQuery]);
 
   // -- Contact / Group List ----------------------------------------------------

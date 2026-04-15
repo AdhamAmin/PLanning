@@ -74,7 +74,7 @@ const AdminRoute = ({ children }) => {
 };
 
 const App = () => {
-  const { currentUser, isCEO } = useAppContext();
+  const { currentUser } = useAppContext();
 
   return (
     <Router>
@@ -94,7 +94,7 @@ const App = () => {
           
           <Route path="/live-map" element={
              <PageRoute pageKey="live-map">
-               {isCEO ? <LiveMap /> : <Navigate to="/tasks" />}
+               <LiveMap />
              </PageRoute>
           } />
 
