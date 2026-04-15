@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── USERS ──────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if true;
+
+      allow create: if request.resource.data.keys().hasAll(['id', 'username', 'role'])
+        && request.resource.data.role in ['user', 'admin', 'ceo']
+        && request.resource.data.get('permanent', false) == false;
+
+      allow update: if request.resource.data.keys().hasAll(['id', 'username', 'role'])
+        && request.resource.data.role in ['user', 'admin', 'ceo'];
+
+      allow delete: if resource.data.get('permanent', false) == false;
+    }
+
+    // ── TASKS ──────────────────────────────────────────────────────────────
+    match /tasks/{taskId} {
+      allow read: if true;
+
+      allow create: if request.resource.data.keys().hasAll(['title', 'status', 'employeeId'])
+        && request.resource.data.status in ['pending', 'in progress', 'completed']
+        && request.resource.data.title.size() > 0;
+
+      allow update: if request.resource.data.status in ['pending', 'in progress', 'completed'];
+
+      allow delete: if true;
+    }
+
+    // ── MESSAGES ───────────────────────────────────────────────────────────
+    match /messages/{msgId} {
+      allow read: if true;
+
+      // Allow create: text messages (with receiverId) OR voice notes OR group messages
+      allow create: if request.resource.data.keys().hasAll(['senderId'])
+        && (
+          // Regular text message to a user
+          (request.resource.data.keys().hasAny(['receiverId'])
+            && request.resource.data.keys().hasAny(['text'])
+          )
+          // Voice note message
+          || (request.resource.data.get('type', '') == 'voice'
+            && request.resource.data.keys().hasAny(['voiceNote'])
+          )
+          // Group message
+          || request.resource.data.keys().hasAny(['groupId'])
+        );
+
+      // Allow update and delete for message management (delete messages, clear chat)
+      allow update: if true;
+      allow delete: if true;
+    }
+
+    // ── NOTIFICATIONS ──────────────────────────────────────────────────────
+    match /notifications/{notifId} {
+      allow read: if true;
+
+      allow create: if request.resource.data.keys().hasAll(['text', 'type'])
+        && request.resource.data.type in ['info', 'success', 'warning'];
+
+      allow update: if true;
+      allow delete: if true;
+    }
+
+    // ── EVENTS (Calendar / Planner) ────────────────────────────────────────
+    match /events/{eventId} {
+      allow read: if true;
+
+      allow create: if request.resource.data.keys().hasAll(['title', 'date', 'creatorId'])
+        && request.resource.data.title.size() > 0;
+
+      allow update: if true;
+      allow delete: if true;
+    }
+
+    // ── OPPORTUNITIES (CRM) ───────────────────────────────────────────────
+    match /opportunities/{oppId} {
+      allow read: if true;
+
+      allow create: if request.resource.data.keys().hasAll(['client', 'sector'])
+        && request.resource.data.client.size() > 0;
+
+      allow update: if true;
+      allow delete: if true;
+    }
+
+    // ── GROUPS (Chat Groups) ──────────────────────────────────────────────
+    match /groups/{groupId} {
+      allow read: if true;
+
+      allow create: if request.resource.data.keys().hasAll(['name', 'members'])
+        && request.resource.data.name.size() > 0;
+
+      allow update: if true;
+      allow delete: if true;
+    }
+
+    // ── CALLS (WebRTC Signaling) ─────────────────────────────────────────
+    match /calls/{callId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if true;
+
+      match /callerCandidates/{candidateId} {
+        allow read: if true;
+        allow create: if true;
+      }
+
+      match /answerCandidates/{candidateId} {
+        allow read: if true;
+        allow create: if true;
+      }
+    }
+  }
+}
