@@ -10,7 +10,7 @@ export default defineConfig({
   ],
   build: {
     chunkSizeWarningLimit: 600,
-    target: 'es2020',
+    target: 'es2015',
     minify: 'esbuild',
     cssMinify: true,
     sourcemap: false,
