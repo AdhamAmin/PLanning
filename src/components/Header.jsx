@@ -320,8 +320,14 @@ const Header = () => {
 
   return (
     <>
-      <header className={`bg-white/95 backdrop-blur-sm border-b border-slate-100 px-4 md:px-6 py-3 flex justify-between items-center gap-3 z-40 shadow-sm w-full min-w-0 ${location.pathname === '/ai' ? 'sticky top-0' : 'relative'}`}
+      <header className={`bg-white/95 backdrop-blur-sm border-b border-slate-100 px-4 md:px-6 py-3 ps-14 md:ps-16 flex justify-between items-center gap-3 z-40 shadow-sm w-full min-w-0 ${location.pathname === '/ai' ? 'sticky top-0' : 'relative'}`}
         style={{ paddingTop: 'calc(var(--app-safe-top) + 0.75rem)' }}>
+        {/* Language-aware corner logo: left in EN, right in AR */}
+        <img
+          src="/drweee-logo.png"
+          alt="DrWEEE logo"
+          className="absolute top-2 start-3 md:start-4 w-9 h-9 md:w-10 md:h-10 object-contain rounded-xl bg-white/90 p-0.5 shadow-sm border border-slate-100 pointer-events-none"
+        />
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className="bg-indigo-600 p-2 rounded-xl shadow-md shadow-indigo-200"><Briefcase className="text-white" size={16}/></div>
           <div className="min-w-0">

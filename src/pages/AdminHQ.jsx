@@ -73,46 +73,95 @@ const RadialGauge = ({ value, max = 100, label, color = '#6366f1', size = 140 })
 };
 
 // ─── PDF export ──────────────────────────────────────────────────────────────
-const exportTableAsPDF = (tasks, users, userStats, opportunities, kpis) => {
+const exportTableAsPDF = (tasks, users, userStats, opportunities, kpis, options = {}) => {
+  const { lang = 'en', t = (x) => x } = options;
   try {
+    const isAr = lang === 'ar';
+    const dir = isAr ? 'rtl' : 'ltr';
+    const locale = isAr ? 'ar-EG' : 'en-GB';
+
+    const statusLabel = (status) => {
+      if (status === 'completed') return t('completed');
+      if (status === 'in progress') return t('inProgress');
+      if (status === 'pending') return t('pending');
+      return status || '-';
+    };
+    const stageLabel = (stage) => {
+      const map = {
+        'Lead': 'stageLead',
+        'Qualified': 'stageQualified',
+        'Negotiation': 'stageNegotiation',
+        'Proposal': 'stageProposal',
+        'Contract': 'stageContract',
+        'Closed Won': 'stageClosedWon',
+        'Closed Lost': 'stageClosedLost',
+      };
+      return t(map[stage] || 'stageLead');
+    };
+    const priorityLabel = (p) => {
+      if (p === 'High') return t('high');
+      if (p === 'Medium') return t('medium');
+      if (p === 'Low') return t('low');
+      return p || t('medium');
+    };
+
     const taskRows = tasks.map(t => {
       const u = users.find(u2 => u2.id === t.employeeId);
-      return '<tr><td>' + (t.title || '-') + '</td><td>' + (u?.username || t.employee || '-') + '</td><td>' + (t.status || '-') + '</td><td>' + (t.priority || 'Medium') + '</td><td>' + (t.sector || '-') + '</td><td>' + (t.dueDate ? new Date(t.dueDate).toLocaleDateString() : '-') + '</td></tr>';
+      return '<tr><td>' + (t.title || '-') + '</td><td>' + (u?.username || t.employee || '-') + '</td><td>' + statusLabel(t.status) + '</td><td>' + priorityLabel(t.priority || 'Medium') + '</td><td>' + (t.sector || '-') + '</td><td>' + (t.dueDate ? new Date(t.dueDate).toLocaleDateString(locale) : '-') + '</td></tr>';
     }).join('');
-    const leaderRows = userStats.map((u, i) => '<tr><td>' + (i+1) + '</td><td>' + u.username + '</td><td>' + u.completed + ' / ' + u.assigned + '</td><td>' + u.pct + '%</td><td>' + u.badge.label + '</td></tr>').join('');
-    const oppRows = (opportunities || []).map(o => '<tr><td>' + (o.name || '-') + '</td><td>' + (o.company || '-') + '</td><td>' + (o.value ? formatCurrency(o.value, o.currency) : '-') + '</td><td>' + (o.sector || '-') + '</td></tr>').join('');
-    const kpiSection = kpis ? '<h3>Key Performance Indicators (KPIs)</h3><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>' +
-      '<tr><td>Total Pipeline Value</td><td>' + (kpis.totalPipeline || 0) + '</td></tr>' +
-      '<tr><td>Won Deals Value</td><td>' + (kpis.wonValue || 0) + '</td></tr>' +
-      '<tr><td>Win Rate</td><td>' + (kpis.winRate || 0) + '%</td></tr>' +
-      '<tr><td>Active Opportunities</td><td>' + (kpis.activeOpps || 0) + '</td></tr>' +
-      '<tr><td>Task Completion Rate</td><td>' + (kpis.taskCompletionRate || 0) + '%</td></tr>' +
-      '<tr><td>Overdue Tasks</td><td>' + (kpis.overdueTasks || 0) + '</td></tr>' +
-      '<tr><td>Total Sectors Active</td><td>' + (kpis.activeSectors || 0) + '</td></tr>' +
-      '<tr><td>Countries Covered</td><td>' + (kpis.activeCountries || 0) + '</td></tr>' +
+    const leaderRows = userStats.map((u, i) => '<tr><td>' + (i+1) + '</td><td>' + u.username + '</td><td>' + u.completed + ' / ' + u.assigned + '</td><td>' + u.pct + '%</td><td>' + t(u.badge?.key || 'perfAverage') + '</td></tr>').join('');
+    const oppRows = (opportunities || []).map(o => '<tr><td>' + (o.name || o.client || '-') + '</td><td>' + (o.company || '-') + '</td><td>' + stageLabel(o.stage || 'Lead') + '</td><td>' + (o.value ? formatCurrency(o.value, o.currency) : '-') + '</td><td>' + (o.sector || '-') + '</td></tr>').join('');
+    const kpiSection = kpis ? '<h3>' + t('kpiScorecard') + '</h3><table><thead><tr><th>' + t('metric') + '</th><th>' + t('value') + '</th></tr></thead><tbody>' +
+      '<tr><td>' + t('totalPipelineValue') + '</td><td>' + (kpis.totalPipeline || 0) + '</td></tr>' +
+      '<tr><td>' + t('wonDealsValue') + '</td><td>' + (kpis.wonValue || 0) + '</td></tr>' +
+      '<tr><td>' + t('winRate') + '</td><td>' + (kpis.winRate || 0) + '%</td></tr>' +
+      '<tr><td>' + t('activeOpps') + '</td><td>' + (kpis.activeOpps || 0) + '</td></tr>' +
+      '<tr><td>' + t('taskCompletionRate') + '</td><td>' + (kpis.taskCompletionRate || 0) + '%</td></tr>' +
+      '<tr><td>' + t('overdueTasks') + '</td><td>' + (kpis.overdueTasks || 0) + '</td></tr>' +
+      '<tr><td>' + t('activeSectors') + '</td><td>' + (kpis.activeSectors || 0) + '</td></tr>' +
+      '<tr><td>' + t('countriesCovered') + '</td><td>' + (kpis.activeCountries || 0) + '</td></tr>' +
       '</tbody></table>' : '';
-    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>DrWEEE Flow Report</title><style>' +
-      'body { font-family: -apple-system, Segoe UI, sans-serif; padding: 32px; color: #334155; }' +
-      'h2 { margin-bottom: 24px; color: #1e1b4b; font-size: 24px; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; }' +
-      'h3 { margin-top: 32px; margin-bottom: 16px; color: #4338ca; font-size: 18px; }' +
-      'table { border-collapse: collapse; width: 100%; margin-bottom: 32px; }' +
-      'th { background: #4f46e5; color: #fff; padding: 10px 14px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }' +
-      'td { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }' +
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + t('efficiencyReport') + '</title><style>' +
+      'body { font-family: -apple-system, Segoe UI, sans-serif; padding: 26px; color: #334155; background:#f8fafc; }' +
+      '.card{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:16px 18px;box-shadow:0 6px 18px rgba(15,23,42,.06);margin-bottom:18px;}' +
+      '.hero{background:linear-gradient(135deg,#4f46e5,#0ea5e9);color:#fff;border:none;}' +
+      'h2 { margin:0 0 8px 0; font-size: 24px; }' +
+      '.sub{opacity:.9;font-size:12px;font-weight:700;}' +
+      'h3 { margin: 8px 0 12px; color: #1e293b; font-size: 16px; }' +
+      'table { border-collapse: collapse; width: 100%; margin-bottom: 10px; overflow:hidden; border-radius:12px; }' +
+      'th { background: #334155; color: #fff; padding: 10px 12px; text-align: ' + (isAr ? 'right' : 'left') + '; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }' +
+      'td { padding: 9px 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px; background:#fff; }' +
       'tr:last-child td { border-bottom: none; }' +
       'tr:nth-child(even) td { background: #f8fafc; }' +
-      '@media print { body { padding: 16px; } table { page-break-inside: auto; } tr { page-break-inside: avoid; } }' +
+      '.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}' +
+      '.chip{font-size:10px;font-weight:800;background:#eef2ff;color:#4338ca;padding:6px 10px;border-radius:999px;}' +
+      '@media print { body { padding: 10px; background:#fff; } .card{box-shadow:none;} table { page-break-inside: auto; } tr { page-break-inside: avoid; } }' +
       '</style></head><body>' +
-      '<h2>DrWEEE Flow - Performance Report</h2>' +
-      '<p style="color:#94a3b8;font-size:12px;">Generated: ' + new Date().toLocaleString() + '</p>' +
+      '<div class="card hero">' +
+      '<h2>' + t('efficiencyReport') + '</h2>' +
+      '<p class="sub">' + t('generated') + ': ' + new Date().toLocaleString(locale) + '</p>' +
+      '<div class="chips">' +
+      '<span class="chip">' + t('tasks') + ': ' + tasks.length + '</span>' +
+      '<span class="chip">' + t('opportunity') + ': ' + (opportunities || []).length + '</span>' +
+      '<span class="chip">' + t('onlineNow') + ': ' + users.filter(u => u.isOnline).length + '</span>' +
+      '</div>' +
+      '</div>' +
+      '<div class="card">' +
       kpiSection +
-      '<h3>Team Leaderboard</h3>' +
-      '<table><thead><tr><th>Rank</th><th>Employee</th><th>Done / Assigned</th><th>Efficiency %</th><th>Rating</th></tr></thead><tbody>' + leaderRows + '</tbody></table>' +
-      '<h3>Task Masterlist</h3>' +
-      '<table><thead><tr><th>Task</th><th>Employee</th><th>Status</th><th>Priority</th><th>Sector</th><th>Due Date</th></tr></thead><tbody>' + taskRows + '</tbody></table>' +
-      (oppRows ? '<h3>Opportunities Pipeline</h3><table><thead><tr><th>Name</th><th>Company</th><th>Value</th><th>Sector</th></tr></thead><tbody>' + oppRows + '</tbody></table>' : '') +
+      '</div>' +
+      '<div class="card">' +
+      '<h3>' + t('teamLeaderboard') + '</h3>' +
+      '<table><thead><tr><th>' + t('rank') + '</th><th>' + t('employee') + '</th><th>' + t('done') + ' / ' + t('assigned') + '</th><th>' + t('efficiencyPct') + '</th><th>' + t('rating') + '</th></tr></thead><tbody>' + leaderRows + '</tbody></table>' +
+      '</div>' +
+      '<div class="card">' +
+      '<h3>' + t('tasks') + '</h3>' +
+      '<table><thead><tr><th>' + t('task') + '</th><th>' + t('employee') + '</th><th>' + t('status') + '</th><th>' + t('priority') + '</th><th>' + t('sector') + '</th><th>' + t('deadline') + '</th></tr></thead><tbody>' + taskRows + '</tbody></table>' +
+      '</div>' +
+      (oppRows ? '<div class="card"><h3>' + t('pipeline') + '</h3><table><thead><tr><th>' + t('client') + '</th><th>' + t('companyAnalytics') + '</th><th>' + t('stage') + '</th><th>' + t('value') + '</th><th>' + t('sector') + '</th></tr></thead><tbody>' + oppRows + '</tbody></table></div>' : '') +
       '</body></html>';
+    const wrappedHtml = html.replace('<body>', '<body dir="' + dir + '" lang="' + (isAr ? 'ar' : 'en') + '">');
     // Use Blob URL to avoid popup blocker issues
-    const blob = new Blob([html], { type: 'text/html' });
+    const blob = new Blob([wrappedHtml], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const printFrame = document.createElement('iframe');
     printFrame.style.position = 'fixed';
@@ -146,7 +195,7 @@ const exportTableAsPDF = (tasks, users, userStats, opportunities, kpis) => {
 
 // ─── Main Dashboard ──────────────────────────────────────────────────────────
 const AdminHQ = () => {
-  const { tasks, users, currentUser, isAdmin, opportunities, addNotification } = useAppContext();
+  const { tasks, users, currentUser, isAdmin, opportunities, addNotification, lang } = useAppContext();
   const t = useT();
   const stageLabel = (st) => {
     const map = {
@@ -349,7 +398,7 @@ const AdminHQ = () => {
           {menuOpen && (
             <div className="absolute end-0 top-12 w-48 bg-white border border-slate-100 rounded-[1.5rem] shadow-2xl p-2 z-50 animate-in zoom-in-95 duration-150">
               <button onClick={() => { navigate('/ai'); setMenuOpen(false); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl hover:bg-indigo-50 text-slate-700"><Sparkles size={16} className="text-indigo-500"/><span className="text-xs font-black uppercase tracking-widest">Ask AI</span></button>
-              <button onClick={() => { exportTableAsPDF(filteredTasks, users, userStats, opportunities, kpis); setMenuOpen(false); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl hover:bg-slate-50 text-slate-700"><FileDown size={16} className="text-slate-400"/><span className="text-xs font-black uppercase tracking-widest">Export PDF</span></button>
+              <button onClick={() => { exportTableAsPDF(filteredTasks, users, userStats, opportunities, kpis, { lang, t }); setMenuOpen(false); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl hover:bg-slate-50 text-slate-700"><FileDown size={16} className="text-slate-400"/><span className="text-xs font-black uppercase tracking-widest">Export PDF</span></button>
             </div>
           )}
         </div>
