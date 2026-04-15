@@ -58,8 +58,11 @@ const StatusDetailsModal = ({ type, itemId, onClose }) => {
     return assignedIds.includes(currentUser.id);
   }, [item, currentUser?.id, isAdmin, isCEO, type, assignedIds]);
 
+  const canManageUpdates = useMemo(() => isAdmin || isCEO, [isAdmin, isCEO]);
+
+  const rawUpdates = useMemo(() => Array.isArray(item?.statusUpdates) ? item.statusUpdates : [], [item?.statusUpdates]);
+
   const updates = useMemo(() => {
-    const list = Array.isArray(item?.statusUpdates) ? item.statusUpdates : [];
     const toMs = (ts) => {
       if (!ts) return 0;
       if (typeof ts.toMillis === 'function') return ts.toMillis();
@@ -67,15 +70,21 @@ const StatusDetailsModal = ({ type, itemId, onClose }) => {
       const d = new Date(ts);
       return isNaN(d) ? 0 : d.getTime();
     };
-    return [...list].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
-  }, [item?.statusUpdates]);
+    return rawUpdates
+      .map((u, idx) => ({ ...u, _rawIndex: idx }))
+      .sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
+  }, [rawUpdates]);
 
   const lastUpdate = updates.length ? updates[updates.length - 1] : null;
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editingIndex, setEditingIndex] = useState(null);
+  const [editingText, setEditingText] = useState('');
 
   useEffect(() => {
     setText('');
+    setEditingIndex(null);
+    setEditingText('');
   }, [itemId, type]);
 
   const formatDateTime = (ts) => {
@@ -91,20 +100,80 @@ const StatusDetailsModal = ({ type, itemId, onClose }) => {
     setSaving(true);
     try {
       const collName = type === 'task' ? 'tasks' : 'opportunities';
+      const newUpdate = {
+        uid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        text: text.trim(),
+        byId: currentUser.id,
+        byName: currentUser.username,
+        createdAt: new Date().toISOString(),
+      };
       await updateDoc(doc(db, collName, item.id), {
-        statusUpdates: arrayUnion({
-          text: text.trim(),
-          byId: currentUser.id,
-          byName: currentUser.username,
-          createdAt: serverTimestamp(),
-        })
+        statusUpdates: arrayUnion(newUpdate)
       });
+
+      // Mention notifications: supports @username and @employeeId
+      const mentionTokens = [...new Set((text.match(/@([A-Za-z0-9_.-]+)/g) || []).map(m => m.slice(1).toLowerCase()))];
+      const mentionedUserIds = users
+        .filter(u => mentionTokens.includes((u.username || '').toLowerCase()) || mentionTokens.includes((u.id || '').toLowerCase()))
+        .map(u => u.id)
+        .filter(uid => uid && uid !== currentUser.id);
+      const title = type === 'task' ? (item.title || t('task')) : (item.client || t('opportunity'));
+      for (const uid of [...new Set(mentionedUserIds)]) {
+        await addNotification(`${currentUser.username} mentioned you in ${type} "${title}"`, 'info', uid);
+      }
+
       addNotification(t('statusUpdateAdded'), 'success', currentUser.id);
       setText('');
     } catch (err) {
       console.warn('[StatusUpdate]', err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleStartEdit = (u) => {
+    if (!canManageUpdates) return;
+    setEditingIndex(u._rawIndex);
+    setEditingText(u.text || '');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!canManageUpdates || editingIndex == null) return;
+    const nextText = editingText.trim();
+    if (!nextText) return;
+    try {
+      const collName = type === 'task' ? 'tasks' : 'opportunities';
+      const next = [...rawUpdates];
+      if (!next[editingIndex]) return;
+      next[editingIndex] = {
+        ...next[editingIndex],
+        text: nextText,
+        editedAt: new Date().toISOString(),
+        editedById: currentUser.id,
+        editedByName: currentUser.username,
+      };
+      await updateDoc(doc(db, collName, item.id), { statusUpdates: next });
+      setEditingIndex(null);
+      setEditingText('');
+      addNotification(t('saveChanges'), 'success', currentUser.id);
+    } catch (err) {
+      console.warn('[StatusUpdateEdit]', err);
+    }
+  };
+
+  const handleDeleteUpdate = async (u) => {
+    if (!canManageUpdates) return;
+    if (!window.confirm(t('deleteMessage') || 'Delete update?')) return;
+    try {
+      const collName = type === 'task' ? 'tasks' : 'opportunities';
+      const next = rawUpdates.filter((_, idx) => idx !== u._rawIndex);
+      await updateDoc(doc(db, collName, item.id), { statusUpdates: next });
+      if (editingIndex === u._rawIndex) {
+        setEditingIndex(null);
+        setEditingText('');
+      }
+    } catch (err) {
+      console.warn('[StatusUpdateDelete]', err);
     }
   };
 
@@ -166,9 +235,32 @@ const StatusDetailsModal = ({ type, itemId, onClose }) => {
                     <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest truncate">
                       {u.byName || users.find(x => x.id === u.byId)?.username || t('employee')}
                     </p>
-                    <p className="text-[9px] font-bold text-slate-400 shrink-0">{formatDateTime(u.createdAt)}</p>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <p className="text-[9px] font-bold text-slate-400">{formatDateTime(u.createdAt)}</p>
+                      {canManageUpdates && (
+                        <>
+                          <button onClick={() => handleStartEdit(u)} className="text-[9px] font-black text-indigo-500 hover:text-indigo-700">{t('editTask')}</button>
+                          <button onClick={() => handleDeleteUpdate(u)} className="text-[9px] font-black text-red-500 hover:text-red-700">{t('deleteMessage')}</button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-sm text-slate-700 font-medium mt-1 whitespace-pre-wrap break-words">{u.text}</p>
+                  {editingIndex === u._rawIndex ? (
+                    <div className="mt-2 space-y-2">
+                      <textarea
+                        rows="3"
+                        value={editingText}
+                        onChange={(e) => setEditingText(e.target.value)}
+                        className="w-full p-3 rounded-xl bg-slate-50 outline-none font-bold text-sm border-none"
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={handleSaveEdit} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest">{t('saveChanges')}</button>
+                        <button onClick={() => { setEditingIndex(null); setEditingText(''); }} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-500 text-[10px] font-black uppercase tracking-widest">{t('logoutCancel')}</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-700 font-medium mt-1 whitespace-pre-wrap break-words">{u.text}</p>
+                  )}
                 </div>
               ))}
             </div>
