@@ -1,6 +1,6 @@
 // DrWEEE Flow Service Worker — Auto-Update + Push Notifications
 // Version is auto-stamped at build time. Change this on every deploy:
-const CACHE_VERSION = '20260416_1925';
+const CACHE_VERSION = '20260416_1933';
 const CACHE_NAME = 'drweee-v' + CACHE_VERSION;
 
 // Install: skip waiting to activate immediately on all devices (including iOS)

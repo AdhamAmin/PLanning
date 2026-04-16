@@ -151,69 +151,8 @@ export const AppProvider = ({ children }) => {
     };
   }, [currentUser?.id]);
 
-  // Live Location (Snap-map style)
-  // Each logged-in user periodically updates their location in Firestore.
-  useEffect(() => {
-    if (!currentUser?.id) return;
-    if (!('geolocation' in navigator)) return;
 
-    const userRef = doc(db, 'users', currentUser.id);
-    let watchId = null;
-    let startupTimer = null;
-    let lastWriteMs = 0;
-    let lastLat = null;
-    let lastLng = null;
 
-    const shouldWrite = (lat, lng, nowMs) => {
-      const minIntervalMs = 25 * 1000; // throttle writes
-      if (nowMs - lastWriteMs < minIntervalMs) return false;
-      if (lastLat == null || lastLng == null) return true;
-      const dLat = Math.abs(lat - lastLat);
-      const dLng = Math.abs(lng - lastLng);
-      // ~0.0002 deg ~ 20m-ish (very rough). Avoid writing tiny jitter.
-      return (dLat + dLng) > 0.0002;
-    };
-
-    const startWatchingLocation = () => {
-      watchId = navigator.geolocation.watchPosition(
-        async (pos) => {
-          const { latitude, longitude, accuracy } = pos.coords || {};
-          if (typeof latitude !== 'number' || typeof longitude !== 'number') return;
-          const nowMs = Date.now();
-          if (!shouldWrite(latitude, longitude, nowMs)) return;
-
-          lastWriteMs = nowMs;
-          lastLat = latitude;
-          lastLng = longitude;
-
-          try {
-            await updateDoc(userRef, {
-              location: { lat: latitude, lng: longitude, accuracy: accuracy ?? null },
-              locationUpdatedAt: serverTimestamp(),
-            });
-          } catch (err) {
-            // silent: offline/permissions/network
-          }
-        },
-        () => {
-          // permission denied or unavailable — do nothing
-        },
-        {
-          enableHighAccuracy: false,
-          maximumAge: 60 * 1000,
-          timeout: 20 * 1000,
-        }
-      );
-    };
-
-    // Let the first screen paint before spinning up background GPS work.
-    startupTimer = window.setTimeout(startWatchingLocation, 1500);
-
-    return () => {
-      if (startupTimer != null) window.clearTimeout(startupTimer);
-      if (watchId != null) navigator.geolocation.clearWatch(watchId);
-    };
-  }, [currentUser?.id]);
 
   // ── Helpers (defined early so smart logic can use them) ────────────────────
   const addNotificationFn = useCallback(async (text, type = 'info', targetUserId = 'all') => {

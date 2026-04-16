@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentSingleTabManager } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDBaCol1DQGkknr3K7oVV6FDwdD5eyJ_LQ",
@@ -12,6 +12,10 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+// persistentSingleTabManager works on ALL browsers including iOS Safari.
+// persistentMultipleTabManager requires SharedWorker (not supported on iOS)
+// and causes a silent hang → white screen on iPhones.
 export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})
+  localCache: persistentLocalCache({ tabManager: persistentSingleTabManager() })
 });
+
