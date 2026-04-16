@@ -1,6 +1,6 @@
 // DrWEEE Flow Service Worker — Auto-Update + Push Notifications
 // Version is auto-stamped at build time. Change this on every deploy:
-const CACHE_VERSION = '20260416_0036';
+const CACHE_VERSION = '20260416_1925';
 const CACHE_NAME = 'drweee-v' + CACHE_VERSION;
 
 // Install: skip waiting to activate immediately on all devices (including iOS)
@@ -55,19 +55,21 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Hashed assets (Vite adds hash to filenames) — cache-first for speed
+  // Hashed assets (Vite adds hash to filenames).
+  // Network-first: always try to fetch the latest chunk; fall back to cache
+  // only if offline. This prevents stale chunk errors (white screens) after
+  // a new deploy while still working offline.
   if (event.request.url.includes('/assets/')) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
-        if (cached) return cached;
-        return fetch(event.request).then((res) => {
-          if (res.status === 200) {
-            const clone = res.clone();
-            caches.open(CACHE_NAME).then((c) => c.put(event.request, clone));
-          }
-          return res;
-        });
-      })
+      fetch(event.request).then((res) => {
+        if (res && res.status === 200) {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then((c) => c.put(event.request, clone));
+        }
+        return res;
+      }).catch(() => caches.match(event.request).then((cached) =>
+        cached || new Response('Offline', { status: 503, statusText: 'Service Unavailable' })
+      ))
     );
     return;
   }

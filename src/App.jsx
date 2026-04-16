@@ -1,4 +1,41 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, Component } from 'react';
+
+// ── Chunk Error Boundary ─────────────────────────────────────────────────────
+// Catches lazy-import failures (e.g. stale chunk after a deploy) and reloads
+// the page once to fetch fresh assets, preventing permanent white screens.
+class ChunkErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error) {
+    const isChunkError =
+      error?.name === 'ChunkLoadError' ||
+      /Loading chunk/.test(error?.message || '') ||
+      /Failed to fetch dynamically imported module/.test(error?.message || '') ||
+      /Importing a module script failed/.test(error?.message || '');
+    if (isChunkError) {
+      const reloadKey = 'chunk_error_reload';
+      const last = parseInt(sessionStorage.getItem(reloadKey) || '0', 10);
+      if (Date.now() - last > 10000) {
+        sessionStorage.setItem(reloadKey, String(Date.now()));
+        window.location.reload();
+      }
+    }
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex items-center justify-center min-h-[40vh] flex-col gap-3">
+          <div className="w-8 h-8 border-3 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+          <p className="text-sm text-gray-500">Loading…</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAppContext } from './context/AppContext';
 import Header from './components/Header';
@@ -49,9 +86,11 @@ const ProtectedRoute = ({ children }) => {
           paddingBottom: 'calc(var(--app-safe-bottom) + 4.5rem)'
         }}
       >
-        <Suspense fallback={<PageLoader />}>
-          {children}
-        </Suspense>
+        <ChunkErrorBoundary>
+          <Suspense fallback={<PageLoader />}>
+            {children}
+          </Suspense>
+        </ChunkErrorBoundary>
       </main>
       <Navigation />
     </div>
@@ -78,6 +117,7 @@ const App = () => {
 
   return (
     <Router>
+      <ChunkErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/login" element={currentUser ? <Navigate to="/tasks" replace /> : <Login />} />
@@ -102,6 +142,7 @@ const App = () => {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
+      </ChunkErrorBoundary>
     </Router>
   );
 };
